@@ -105,22 +105,26 @@ function WW(){return window.innerWidth}function HH(){return window.innerHeight}
 // ===== SOUND ENGINE (Web Audio API — no files needed!) =====
 const AudioCtx=window.AudioContext||window.webkitAudioContext;
 let audioCtx=null;
-function ensureAudio(){if(!audioCtx)audioCtx=new AudioCtx();if(audioCtx.state==='suspended')audioCtx.resume()}
-function playTone(freq,dur,type,vol,slide){
-  if(!audioCtx)return;
-  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
-  o.type=type||'square';o.frequency.setValueAtTime(freq,audioCtx.currentTime);
-  if(slide)o.frequency.linearRampToValueAtTime(slide,audioCtx.currentTime+dur);
-  g.gain.setValueAtTime(vol||0.15,audioCtx.currentTime);
-  g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+dur);
-  o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+dur);
+function ensureAudio(){
+  try{if(!audioCtx)audioCtx=new AudioCtx();if(audioCtx.state==='suspended')audioCtx.resume()}catch(e){}
 }
-function sfxJump(){playTone(250,0.15,'square',0.12,500)}
-function sfxCoin(){playTone(800,0.08,'square',0.1);setTimeout(()=>playTone(1200,0.1,'square',0.1),80)}
-function sfxDoubleCoin(){playTone(800,0.06,'square',0.1);setTimeout(()=>playTone(1100,0.06,'square',0.1),60);setTimeout(()=>playTone(1500,0.12,'square',0.12),120)}
-function sfxHit(){playTone(120,0.2,'sawtooth',0.15,60)}
-function sfxCaught(){playTone(300,0.4,'sawtooth',0.18,50);setTimeout(()=>playTone(200,0.5,'sawtooth',0.15,30),200)}
-function sfxWin(){playTone(500,0.12,'square',0.1);setTimeout(()=>playTone(630,0.12,'square',0.1),120);setTimeout(()=>playTone(800,0.12,'square',0.1),240);setTimeout(()=>playTone(1000,0.3,'square',0.12),360)}
+function playTone(freq,dur,type,vol,slide){
+  try{
+    if(!audioCtx)return;if(audioCtx.state==='suspended')audioCtx.resume();
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.type=type||'square';o.frequency.setValueAtTime(freq,audioCtx.currentTime);
+    if(slide)o.frequency.linearRampToValueAtTime(slide,audioCtx.currentTime+dur);
+    g.gain.setValueAtTime(vol||0.3,audioCtx.currentTime);
+    g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+dur);
+    o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+dur);
+  }catch(e){}
+}
+function sfxJump(){playTone(250,0.15,'square',0.35,500)}
+function sfxCoin(){playTone(800,0.1,'square',0.3);setTimeout(()=>playTone(1200,0.12,'square',0.3),80)}
+function sfxDoubleCoin(){playTone(800,0.08,'square',0.3);setTimeout(()=>playTone(1100,0.08,'square',0.3),60);setTimeout(()=>playTone(1500,0.15,'square',0.35),120)}
+function sfxHit(){playTone(120,0.25,'sawtooth',0.4,60)}
+function sfxCaught(){playTone(300,0.5,'sawtooth',0.5,50);setTimeout(()=>playTone(200,0.6,'sawtooth',0.4,30),200)}
+function sfxWin(){playTone(500,0.15,'square',0.3);setTimeout(()=>playTone(630,0.15,'square',0.3),120);setTimeout(()=>playTone(800,0.15,'square',0.3),240);setTimeout(()=>playTone(1000,0.35,'square',0.35),360)}
 
 // ===== PERSISTENT (localStorage) =====
 let wallet=0;
@@ -179,10 +183,10 @@ function createState(){
   const sB=4+upgrades.speed.level*0.3;
   const jB=upgrades.jump.level*0.7;
   const hs=upgrades.headstart.level*100;
-  const tStart=mob?-500:-800;
+  const tStart=mob?-500:-1200;
   return{running:false,gameOver:false,won:false,distance:0,speed:sB,baseSpeed:sB,maxSpeed:sB,speedBoostTimer:0,coinsThisRun:0,isMobile:mob,
     player:{x:mob?60:120,y:0,w:mob?26:32,h:mob?40:48,vy:0,grounded:true,jumpPower:-(12+jB)*(mob?1:1.1),gravity:0.55,frame:0,frameTimer:0},
-    tsunami:{x:tStart-hs,speed:1.0,accel:0.00018},
+    tsunami:{x:tStart-hs,speed:0,accel:0.00015,graceTimer:180},
     groundY:0,obstacles:[],coinItems:[],particles:[],clouds:[],shakeTimer:0,shakeIntensity:0,spawnTimer:0,coinSpawnTimer:0,time:0,firstCoinSpawned:false};
 }
 function initClouds(s){s.clouds=[];for(let i=0;i<8;i++)s.clouds.push({x:Math.random()*WW()*2,y:40+Math.random()*(HH()*0.3),w:60+Math.random()*120,h:15+Math.random()*25,speed:0.2+Math.random()*0.5,alpha:0.05+Math.random()*0.1})}
@@ -214,10 +218,12 @@ function update(s){
   if(!p.grounded){p.vy+=p.gravity;p.y+=p.vy;if(p.y>=s.groundY-p.h){p.y=s.groundY-p.h;p.vy=0;p.grounded=true;emitP(s,p.x+p.w/2,s.groundY,'#334466',4)}}
   p.frameTimer+=1;if(p.frameTimer>6){p.frame=(p.frame+1)%4;p.frameTimer=0}
 
-  // Tsunami — much slower
-  s.tsunami.speed+=s.tsunami.accel;
-  s.tsunami.x+=s.tsunami.speed;
-  s.tsunami.x+=(s.tsunami.speed-s.speed*0.35)*0.06;
+  // Tsunami — grace period then gradual ramp up
+  if(s.tsunami.graceTimer>0){s.tsunami.graceTimer--}else{
+    s.tsunami.speed+=s.tsunami.accel;
+    s.tsunami.x+=s.tsunami.speed;
+    s.tsunami.x+=(s.tsunami.speed-s.speed*0.35)*0.06;
+  }
 
   if(s.tsunami.x>=p.x-15){s.gameOver=true;s.running=false;s.shakeTimer=20;s.shakeIntensity=8;wallet+=s.coinsThisRun;totalRuns++;const nb=s.distance>bestDistance?'🏆 NEW BEST! ':'';if(s.distance>bestDistance)bestDistance=s.distance;saveGame();sfxCaught();document.getElementById('game-over-screen').classList.remove('hidden');document.getElementById('go-stats').textContent=`${nb}📏 ${Math.floor(s.distance)}m | 🪙 +${s.coinsThisRun} this run`;renderShop('go-shop','go-wallet');return}
 
