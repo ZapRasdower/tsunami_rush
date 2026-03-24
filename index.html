@@ -67,6 +67,7 @@
 <div id="start-screen" class="screen-overlay">
   <h1>TSUNAMI RUNNER</h1>
   <div class="subtitle">OUTRUN THE WAVE</div>
+  <div class="stats" id="best-stats"></div>
   <button class="btn" id="start-btn">RUN!</button>
   <div class="controls-info"><span>TAP</span> anywhere to JUMP<br>Collect 🪙 for speed boosts<br>Coins persist — buy upgrades between runs!</div>
 </div>
@@ -101,8 +102,30 @@ function resize(){dpr=Math.min(window.devicePixelRatio||1,2);const w=window.inne
 resize();window.addEventListener('resize',resize);window.addEventListener('orientationchange',()=>setTimeout(resize,200));
 function WW(){return window.innerWidth}function HH(){return window.innerHeight}
 
-// ===== PERSISTENT =====
+// ===== SOUND ENGINE (Web Audio API — no files needed!) =====
+const AudioCtx=window.AudioContext||window.webkitAudioContext;
+let audioCtx=null;
+function ensureAudio(){if(!audioCtx)audioCtx=new AudioCtx();if(audioCtx.state==='suspended')audioCtx.resume()}
+function playTone(freq,dur,type,vol,slide){
+  if(!audioCtx)return;
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type=type||'square';o.frequency.setValueAtTime(freq,audioCtx.currentTime);
+  if(slide)o.frequency.linearRampToValueAtTime(slide,audioCtx.currentTime+dur);
+  g.gain.setValueAtTime(vol||0.15,audioCtx.currentTime);
+  g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+dur);
+  o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+dur);
+}
+function sfxJump(){playTone(250,0.15,'square',0.12,500)}
+function sfxCoin(){playTone(800,0.08,'square',0.1);setTimeout(()=>playTone(1200,0.1,'square',0.1),80)}
+function sfxDoubleCoin(){playTone(800,0.06,'square',0.1);setTimeout(()=>playTone(1100,0.06,'square',0.1),60);setTimeout(()=>playTone(1500,0.12,'square',0.12),120)}
+function sfxHit(){playTone(120,0.2,'sawtooth',0.15,60)}
+function sfxCaught(){playTone(300,0.4,'sawtooth',0.18,50);setTimeout(()=>playTone(200,0.5,'sawtooth',0.15,30),200)}
+function sfxWin(){playTone(500,0.12,'square',0.1);setTimeout(()=>playTone(630,0.12,'square',0.1),120);setTimeout(()=>playTone(800,0.12,'square',0.1),240);setTimeout(()=>playTone(1000,0.3,'square',0.12),360)}
+
+// ===== PERSISTENT (localStorage) =====
 let wallet=0;
+let bestDistance=0;
+let totalRuns=0;
 const upgrades={
   speed:{level:0,maxLevel:15,baseCost:3,costMult:1.3,name:'🏃 Speed',desc:'Start faster each run'},
   jump:{level:0,maxLevel:8,baseCost:3,costMult:1.3,name:'🦘 Jump Power',desc:'Jump higher'},
@@ -111,6 +134,27 @@ const upgrades={
   headstart:{level:0,maxLevel:5,baseCost:4,costMult:1.3,name:'🚀 Head Start',desc:'Start further from wave'},
   coinbonus:{level:0,maxLevel:8,baseCost:3,costMult:1.2,name:'💰 Double Coins',desc:'Chance for 2x coins'},
 };
+function saveGame(){
+  try{localStorage.setItem('tsunami_runner_save',JSON.stringify({
+    wallet,bestDistance,totalRuns,
+    upgradeLevels:Object.fromEntries(Object.entries(upgrades).map(([k,v])=>[k,v.level]))
+  }))}catch(e){}
+}
+function loadGame(){
+  try{
+    const d=JSON.parse(localStorage.getItem('tsunami_runner_save'));
+    if(!d)return;
+    wallet=d.wallet||0;bestDistance=d.bestDistance||0;totalRuns=d.totalRuns||0;
+    if(d.upgradeLevels)for(const[k,lv]of Object.entries(d.upgradeLevels))if(upgrades[k])upgrades[k].level=Math.min(lv,upgrades[k].maxLevel);
+  }catch(e){}
+}
+loadGame();
+function updateStartScreen(){
+  const el=document.getElementById('best-stats');
+  if(bestDistance>0)el.textContent=`🏆 Best: ${Math.floor(bestDistance)}m | 🪙 ${wallet} coins | ${totalRuns} runs`;
+  else el.textContent='';
+}
+updateStartScreen();
 function getCost(k){const u=upgrades[k];return Math.floor(u.baseCost*Math.pow(u.costMult,u.level))}
 function renderShop(cid,wid){
   const con=document.getElementById(cid),wel=document.getElementById(wid);
@@ -123,7 +167,7 @@ function renderShop(cid,wid){
     con.appendChild(it);
   }
   con.querySelectorAll('button[data-key]').forEach(btn=>{
-    const handler=e=>{e.preventDefault();e.stopPropagation();const kk=btn.dataset.key,cc=getCost(kk);if(wallet>=cc&&upgrades[kk].level<upgrades[kk].maxLevel){wallet-=cc;upgrades[kk].level++;renderShop(cid,wid)}};
+    const handler=e=>{e.preventDefault();e.stopPropagation();const kk=btn.dataset.key,cc=getCost(kk);if(wallet>=cc&&upgrades[kk].level<upgrades[kk].maxLevel){wallet-=cc;upgrades[kk].level++;sfxCoin();saveGame();renderShop(cid,wid)}};
     btn.addEventListener('click',handler);btn.addEventListener('touchend',handler,{passive:false});
   });
 }
@@ -146,14 +190,14 @@ function spawnCoin(s){const row=Math.floor(Math.random()*3);const yOff=row===0?3
 function emitP(s,x,y,c,n){const m=s.isMobile?Math.min(n,5):n;for(let i=0;i<m;i++)s.particles.push({x,y,vx:(Math.random()-.5)*6,vy:-Math.random()*5-1,life:1,decay:.02+Math.random()*.03,color:c,r:2+Math.random()*3})}
 
 // INPUT
-function onJump(){if(!state||!state.running)return;if(state.player.grounded){state.player.vy=state.player.jumpPower;state.player.grounded=false;emitP(state,state.player.x,state.player.y+state.player.h,'#557799',6);jumpFlash.classList.add('active');setTimeout(()=>jumpFlash.classList.remove('active'),100)}}
+function onJump(){if(!state||!state.running)return;if(state.player.grounded){state.player.vy=state.player.jumpPower;state.player.grounded=false;sfxJump();emitP(state,state.player.x,state.player.y+state.player.h,'#557799',6);jumpFlash.classList.add('active');setTimeout(()=>jumpFlash.classList.remove('active'),100)}}
 window.addEventListener('keydown',e=>{if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();onJump()}});
 document.getElementById('tap-zone').addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();onJump()},{passive:false});
 document.getElementById('tap-zone').addEventListener('pointerdown',e=>{if(e.pointerType==='mouse')onJump()});
 function wireBtn(id,fn){const el=document.getElementById(id);el.addEventListener('click',e=>{e.stopPropagation();fn()});el.addEventListener('touchend',e=>{e.preventDefault();e.stopPropagation();fn()},{passive:false})}
 wireBtn('start-btn',startGame);wireBtn('retry-btn',startGame);wireBtn('again-btn',startGame);
 
-function startGame(){resize();state=createState();state.groundY=HH()-(state.isMobile?60:80);state.player.y=state.groundY-state.player.h;initClouds(state);document.getElementById('start-screen').classList.add('hidden');document.getElementById('game-over-screen').classList.add('hidden');document.getElementById('win-screen').classList.add('hidden');state.running=true;document.getElementById('goal-dist').textContent=GOAL_DISTANCE}
+function startGame(){ensureAudio();updateStartScreen();resize();state=createState();state.groundY=HH()-(state.isMobile?60:80);state.player.y=state.groundY-state.player.h;initClouds(state);document.getElementById('start-screen').classList.add('hidden');document.getElementById('game-over-screen').classList.add('hidden');document.getElementById('win-screen').classList.add('hidden');state.running=true;document.getElementById('goal-dist').textContent=GOAL_DISTANCE}
 
 function rectOvlp(x1,y1,w1,h1,x2,y2,w2,h2){return x1<x2+w2&&x1+w1>x2&&y1<y2+h2&&y1+h1>y2}
 
@@ -163,7 +207,7 @@ function update(s){
   if(s.speedBoostTimer>0){s.speedBoostTimer-=1;if(s.speedBoostTimer<=0)s.speed=s.baseSpeed}
   s.distance+=s.speed*0.15;
 
-  if(s.distance>=GOAL_DISTANCE){s.won=true;s.running=false;wallet+=s.coinsThisRun;document.getElementById('win-screen').classList.remove('hidden');document.getElementById('win-stats').textContent=`📏 ${Math.floor(s.distance)}m | 🪙 +${s.coinsThisRun} this run`;renderShop('win-shop','win-wallet');return}
+  if(s.distance>=GOAL_DISTANCE){s.won=true;s.running=false;wallet+=s.coinsThisRun;totalRuns++;const nb=s.distance>bestDistance?'🏆 NEW BEST! ':'';if(s.distance>bestDistance)bestDistance=s.distance;saveGame();sfxWin();document.getElementById('win-screen').classList.remove('hidden');document.getElementById('win-stats').textContent=`${nb}📏 ${Math.floor(s.distance)}m | 🪙 +${s.coinsThisRun} this run`;renderShop('win-shop','win-wallet');return}
 
   const p=s.player;
   if(!p.grounded){p.vy+=p.gravity;p.y+=p.vy;if(p.y>=s.groundY-p.h){p.y=s.groundY-p.h;p.vy=0;p.grounded=true;emitP(s,p.x+p.w/2,s.groundY,'#334466',4)}}
@@ -174,17 +218,17 @@ function update(s){
   s.tsunami.x+=s.tsunami.speed;
   s.tsunami.x+=(s.tsunami.speed-s.speed*0.35)*0.06;
 
-  if(s.tsunami.x>=p.x-15){s.gameOver=true;s.running=false;s.shakeTimer=20;s.shakeIntensity=8;wallet+=s.coinsThisRun;document.getElementById('game-over-screen').classList.remove('hidden');document.getElementById('go-stats').textContent=`📏 ${Math.floor(s.distance)}m | 🪙 +${s.coinsThisRun} this run`;renderShop('go-shop','go-wallet');return}
+  if(s.tsunami.x>=p.x-15){s.gameOver=true;s.running=false;s.shakeTimer=20;s.shakeIntensity=8;wallet+=s.coinsThisRun;totalRuns++;const nb=s.distance>bestDistance?'🏆 NEW BEST! ':'';if(s.distance>bestDistance)bestDistance=s.distance;saveGame();sfxCaught();document.getElementById('game-over-screen').classList.remove('hidden');document.getElementById('go-stats').textContent=`${nb}📏 ${Math.floor(s.distance)}m | 🪙 +${s.coinsThisRun} this run`;renderShop('go-shop','go-wallet');return}
 
   s.spawnTimer-=1;if(s.spawnTimer<=0){spawnObstacle(s);s.spawnTimer=45+Math.random()*60/(1+s.distance/600)}
   s.coinSpawnTimer-=1;if(s.coinSpawnTimer<=0){spawnCoin(s);s.coinSpawnTimer=18+Math.random()*30}
 
   const armR=upgrades.armor.level*0.2;
-  for(let i=s.obstacles.length-1;i>=0;i--){const o=s.obstacles[i];o.x-=s.speed;if(!o.passed&&rectOvlp(p.x+4,p.y+4,p.w-8,p.h-4,o.x,o.y,o.w,o.h)){const sl=Math.max(0.2,1.3-armR);s.speed=Math.max(2,s.speed-sl);s.baseSpeed=Math.max(2,s.baseSpeed-Math.max(0.03,0.25-armR*0.04));s.shakeTimer=10;s.shakeIntensity=5;o.passed=true;emitP(s,o.x+o.w/2,o.y+o.h/2,'#ff6644',12)}if(o.x+o.w<-50)s.obstacles.splice(i,1)}
+  for(let i=s.obstacles.length-1;i>=0;i--){const o=s.obstacles[i];o.x-=s.speed;if(!o.passed&&rectOvlp(p.x+4,p.y+4,p.w-8,p.h-4,o.x,o.y,o.w,o.h)){const sl=Math.max(0.2,1.3-armR);s.speed=Math.max(2,s.speed-sl);s.baseSpeed=Math.max(2,s.baseSpeed-Math.max(0.03,0.25-armR*0.04));s.shakeTimer=10;s.shakeIntensity=5;o.passed=true;sfxHit();emitP(s,o.x+o.w/2,o.y+o.h/2,'#ff6644',12)}if(o.x+o.w<-50)s.obstacles.splice(i,1)}
 
   const magR=20+upgrades.magnet.level*10;
   const dblC=upgrades.coinbonus.level*0.1;
-  for(let i=s.coinItems.length-1;i>=0;i--){const c=s.coinItems[i];c.x-=s.speed;c.bobPhase+=0.08;const bY=Math.sin(c.bobPhase)*4;if(!c.collected){const dx=(p.x+p.w/2)-c.x,dy=(p.y+p.h/2)-(c.y+bY);if(Math.sqrt(dx*dx+dy*dy)<c.r+magR){c.collected=true;const bon=Math.random()<dblC?2:1;s.coinsThisRun+=bon;s.speed=Math.min(12,s.speed+0.6);s.baseSpeed=Math.min(8,s.baseSpeed+0.1);s.speedBoostTimer=90;if(s.speed>s.maxSpeed)s.maxSpeed=s.speed;emitP(s,c.x,c.y,'#ffd700',10);if(bon===2)emitP(s,c.x,c.y-10,'#ff44ff',8)}}if(c.x<-50||c.collected)s.coinItems.splice(i,1)}
+  for(let i=s.coinItems.length-1;i>=0;i--){const c=s.coinItems[i];c.x-=s.speed;c.bobPhase+=0.08;const bY=Math.sin(c.bobPhase)*4;if(!c.collected){const dx=(p.x+p.w/2)-c.x,dy=(p.y+p.h/2)-(c.y+bY);if(Math.sqrt(dx*dx+dy*dy)<c.r+magR){c.collected=true;const bon=Math.random()<dblC?2:1;s.coinsThisRun+=bon;s.speed=Math.min(12,s.speed+0.6);s.baseSpeed=Math.min(8,s.baseSpeed+0.1);s.speedBoostTimer=90;if(s.speed>s.maxSpeed)s.maxSpeed=s.speed;if(bon===2){sfxDoubleCoin();emitP(s,c.x,c.y-10,'#ff44ff',8)}else{sfxCoin()}emitP(s,c.x,c.y,'#ffd700',10)}}if(c.x<-50||c.collected)s.coinItems.splice(i,1)}
 
   for(let i=s.particles.length-1;i>=0;i--){const pt=s.particles[i];pt.x+=pt.vx;pt.y+=pt.vy;pt.vy+=0.15;pt.life-=pt.decay;if(pt.life<=0)s.particles.splice(i,1)}
   for(const cl of s.clouds){cl.x-=cl.speed+s.speed*0.1;if(cl.x+cl.w<0){cl.x=WW()+50;cl.y=40+Math.random()*(HH()*0.3)}}
