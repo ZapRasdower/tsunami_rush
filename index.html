@@ -179,10 +179,11 @@ function createState(){
   const sB=4+upgrades.speed.level*0.3;
   const jB=upgrades.jump.level*0.7;
   const hs=upgrades.headstart.level*100;
+  const tStart=mob?-500:-800;
   return{running:false,gameOver:false,won:false,distance:0,speed:sB,baseSpeed:sB,maxSpeed:sB,speedBoostTimer:0,coinsThisRun:0,isMobile:mob,
     player:{x:mob?60:120,y:0,w:mob?26:32,h:mob?40:48,vy:0,grounded:true,jumpPower:-(12+jB)*(mob?1:1.1),gravity:0.55,frame:0,frameTimer:0},
-    tsunami:{x:-500-hs,speed:1.2,accel:0.0002},
-    groundY:0,obstacles:[],coinItems:[],particles:[],clouds:[],shakeTimer:0,shakeIntensity:0,spawnTimer:0,coinSpawnTimer:0,time:0};
+    tsunami:{x:tStart-hs,speed:1.0,accel:0.00018},
+    groundY:0,obstacles:[],coinItems:[],particles:[],clouds:[],shakeTimer:0,shakeIntensity:0,spawnTimer:0,coinSpawnTimer:0,time:0,firstCoinSpawned:false};
 }
 function initClouds(s){s.clouds=[];for(let i=0;i<8;i++)s.clouds.push({x:Math.random()*WW()*2,y:40+Math.random()*(HH()*0.3),w:60+Math.random()*120,h:15+Math.random()*25,speed:0.2+Math.random()*0.5,alpha:0.05+Math.random()*0.1})}
 function spawnObstacle(s){const t=['crate','rock','barrier'][Math.floor(Math.random()*3)];const sc=s.isMobile?0.8:1;let w,h;if(t==='crate'){w=(30+Math.random()*15)*sc;h=(30+Math.random()*20)*sc}else if(t==='rock'){w=(25+Math.random()*20)*sc;h=(20+Math.random()*15)*sc}else{w=(15+Math.random()*10)*sc;h=(40+Math.random()*30)*sc}s.obstacles.push({x:WW()+50+Math.random()*200,y:s.groundY-h,w,h,type:t,passed:false})}
@@ -221,7 +222,7 @@ function update(s){
   if(s.tsunami.x>=p.x-15){s.gameOver=true;s.running=false;s.shakeTimer=20;s.shakeIntensity=8;wallet+=s.coinsThisRun;totalRuns++;const nb=s.distance>bestDistance?'🏆 NEW BEST! ':'';if(s.distance>bestDistance)bestDistance=s.distance;saveGame();sfxCaught();document.getElementById('game-over-screen').classList.remove('hidden');document.getElementById('go-stats').textContent=`${nb}📏 ${Math.floor(s.distance)}m | 🪙 +${s.coinsThisRun} this run`;renderShop('go-shop','go-wallet');return}
 
   s.spawnTimer-=1;if(s.spawnTimer<=0){spawnObstacle(s);s.spawnTimer=45+Math.random()*60/(1+s.distance/600)}
-  s.coinSpawnTimer-=1;if(s.coinSpawnTimer<=0){spawnCoin(s);s.coinSpawnTimer=18+Math.random()*30}
+  s.coinSpawnTimer-=1;if(s.coinSpawnTimer<=0){if(!s.firstCoinSpawned){s.coinItems.push({x:WW()*0.6,y:s.groundY-30,r:s.isMobile?9:10,collected:false,bobPhase:0});s.coinItems.push({x:WW()*0.75,y:s.groundY-55,r:s.isMobile?9:10,collected:false,bobPhase:1});s.firstCoinSpawned=true}else{spawnCoin(s)}s.coinSpawnTimer=18+Math.random()*30}
 
   const armR=upgrades.armor.level*0.2;
   for(let i=s.obstacles.length-1;i>=0;i--){const o=s.obstacles[i];o.x-=s.speed;if(!o.passed&&rectOvlp(p.x+4,p.y+4,p.w-8,p.h-4,o.x,o.y,o.w,o.h)){const sl=Math.max(0.2,1.3-armR);s.speed=Math.max(2,s.speed-sl);s.baseSpeed=Math.max(2,s.baseSpeed-Math.max(0.03,0.25-armR*0.04));s.shakeTimer=10;s.shakeIntensity=5;o.passed=true;sfxHit();emitP(s,o.x+o.w/2,o.y+o.h/2,'#ff6644',12)}if(o.x+o.w<-50)s.obstacles.splice(i,1)}
